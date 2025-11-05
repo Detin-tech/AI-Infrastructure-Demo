@@ -1,0 +1,197 @@
+version: '3.8'
+
+services:
+  # Caddy Reverse Proxy with TLS
+  caddy:
+    image: caddy:2-alpine
+    container_name: caddy-proxy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "${API_PORT:-8000}:${API_PORT:-8000}"
+    volumes:
+      - ./services/caddy/Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - llm-load-balancer
+    networks:
+      - zerotier
+    restart: unless-stopped
+
+  # LLM Load Balancer
+  llm-load-balancer:
+    image: nginx:alpine
+    container_name: llm-load-balancer
+    volumes:
+      - ./services/nginx/nginx.conf:/etc/nginx/nginx.conf
+    ports:
+      - "8001:8000"
+    networks:
+      - zerotier
+    depends_on:
+      - llm-worker-1
+      - llm-worker-2
+      - llm-worker-3
+    restart: unless-stopped
+
+  # LLM Workers
+  llm-worker-1:
+    build:
+      context: ./services/llm
+      dockerfile: Dockerfile
+    container_name: llm-worker-1
+    environment:
+      - WORKER_ID=1
+      - MODEL_NAME=${MODEL_NAME:-gpt2}
+      - API_KEY=${API_KEY}
+    ports:
+      - "8002:8000"
+    volumes:
+      - llm_models:/app/models
+    networks:
+      - zerotier
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: ${GPU_DRIVER:-none}
+              count: ${GPU_COUNT:-0}
+              capabilities: [gpu]
+
+  llm-worker-2:
+    build:
+      context: ./services/llm
+      dockerfile: Dockerfile
+    container_name: llm-worker-2
+    environment:
+      - WORKER_ID=2
+      - MODEL_NAME=${MODEL_NAME:-gpt2}
+      - API_KEY=${API_KEY}
+    ports:
+      - "8003:8000"
+    volumes:
+      - llm_models:/app/models
+    networks:
+      - zerotier
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: ${GPU_DRIVER:-none}
+              count: ${GPU_COUNT:-0}
+              capabilities: [gpu]
+
+  llm-worker-3:
+    build:
+      context: ./services/llm
+      dockerfile: Dockerfile
+    container_name: llm-worker-3
+    environment:
+      - WORKER_ID=3
+      - MODEL_NAME=${MODEL_NAME:-gpt2}
+      - API_KEY=${API_KEY}
+    ports:
+      - "8004:8000"
+    volumes:
+      - llm_models:/app/models
+    networks:
+      - zerotier
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: ${GPU_DRIVER:-none}
+              count: ${GPU_COUNT:-0}
+              capabilities: [gpu]
+
+  # Monitoring Stack
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./services/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    networks:
+      - zerotier
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana-enterprise
+    container_name: grafana
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./services/grafana/provisioning:/etc/grafana/provisioning
+    networks:
+      - zerotier
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+
+  node-exporter:
+    image: quay.io/prometheus/node-exporter:latest
+    container_name: node-exporter
+    ports:
+      - "${NODE_EXPORTER_PORT:-9100}:9100"
+    networks:
+      - zerotier
+    restart: unless-stopped
+    pid: host
+    volumes:
+      - /proc:/proc:ro
+      - /sys:/sys:ro
+      - /:/rootfs:ro
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    container_name: cadvisor
+    ports:
+      - "${CADVISOR_PORT:-8080}:8080"
+    networks:
+      - zerotier
+    restart: unless-stopped
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:rw
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+
+  # ZeroTier Client
+  zerotier:
+    image: zerotier/zerotier:latest
+    container_name: zerotier-client
+    network_mode: "host"
+    privileged: true
+    volumes:
+      - zerotier_data:/var/lib/zerotier-one
+    devices:
+      - "/dev/net/tun:/dev/net/tun"
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+    restart: unless-stopped
+    entrypoint: ["zerotier-one", "-d"]
+
+volumes:
+  caddy_data:
+  caddy_config:
+  prometheus_data:
+  grafana_data:
+  llm_models:
+  zerotier_data:
+
+networks:
+  zerotier:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.10.0.0/16

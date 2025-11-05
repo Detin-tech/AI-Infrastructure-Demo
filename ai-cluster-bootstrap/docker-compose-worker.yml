@@ -1,0 +1,54 @@
+version: '3.8'
+
+services:
+  # LLM Worker
+  llm-worker:
+    build:
+      context: ./services/llm
+      dockerfile: Dockerfile
+    container_name: llm-worker
+    environment:
+      - WORKER_ID=${WORKER_ID:-1}
+      - MODEL_NAME=${MODEL_NAME:-gpt2}
+      - API_KEY=${API_KEY}
+    ports:
+      - "8000:8000"
+    volumes:
+      - llm_models:/app/models
+    networks:
+      - zerotier
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: ${GPU_DRIVER:-none}
+              count: ${GPU_COUNT:-0}
+              capabilities: [gpu]
+
+  # ZeroTier Client
+  zerotier:
+    image: zerotier/zerotier:latest
+    container_name: zerotier-client
+    network_mode: "host"
+    privileged: true
+    volumes:
+      - zerotier_data:/var/lib/zerotier-one
+    devices:
+      - "/dev/net/tun:/dev/net/tun"
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+    restart: unless-stopped
+    entrypoint: ["zerotier-one", "-d"]
+
+volumes:
+  llm_models:
+  zerotier_data:
+
+networks:
+  zerotier:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.10.0.0/16

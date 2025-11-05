@@ -1,0 +1,17 @@
+{
+    admin 0.0.0.0:2019
+    log {
+        level DEBUG
+    }
+}
+
+{$DOMAIN_NAME} {
+    reverse_proxy /api/* http://llm-load-balancer:8000
+    reverse_proxy /* http://llm-load-balancer:8000
+    
+    log {
+        output stdout
+    }
+    
+    tls {$ADMIN_EMAIL}
+}
